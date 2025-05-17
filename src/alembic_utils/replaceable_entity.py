@@ -20,7 +20,7 @@ from sqlalchemy.sql.elements import TextClause
 
 import alembic_utils
 from alembic_utils.depends import solve_resolution_order
-from alembic_utils.exceptions import UnreachableException
+from alembic_utils.exceptions import BadInputException, UnreachableException
 from alembic_utils.experimental import collect_subclasses
 from alembic_utils.reversible_op import (
     CreateOp,
@@ -198,7 +198,16 @@ class ReplaceableEntityRegistry:
         exclude_schemas: Optional[Iterable[str]] = None,
         entity_types: Optional[Iterable[Type[ReplaceableEntity]]] = None,
     ) -> None:
-        self._entities.update({e.identity: e for e in entities})
+        for entity in entities:
+            if entity.identity in self._entities:
+                if str(self._entities[entity.identity].to_sql_statement_create()) != str(entity.to_sql_statement_create()):
+                    # If the two entities generates the same SQL, it is not a conflict and we can overwrite it.
+                    raise BadInputException(
+                        f"Entity with identity {entity.identity} already registered. \n"
+                        f"Existing entity: {self._entities[entity.identity]} \n"
+                        f"New entity: {entity}"
+                    )
+            self._entities[entity.identity] = entity
 
         if schemas:
             self.schemas |= set(schemas)

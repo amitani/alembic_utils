@@ -31,7 +31,7 @@ TEST_GRANT = PGGrantTable(
     schema="public",
     table="account",
     role="anon_user",
-    grant=PGGrantTableChoice.DELETE,
+    grant=PGGrantTableChoice.SELECT,
     with_grant_option=False,
 )
 
@@ -50,15 +50,6 @@ def test_bad_input():
             role="anon_user",
             grant=PGGrantTableChoice.DELETE,
             columns=["id"],  # columns not allowed for delete
-        )
-
-    with pytest.raises(BadInputException):
-        PGGrantTable(
-            schema="public",
-            table="account",
-            role="anon_user",
-            grant=PGGrantTableChoice.SELECT,
-            # columns required for select
         )
 
 
@@ -94,7 +85,7 @@ def test_replace_revision(sql_setup, engine) -> None:
         schema="public",
         table="account",
         role="anon_user",
-        grant=PGGrantTableChoice.DELETE,
+        grant=PGGrantTableChoice.SELECT,
         with_grant_option=True,
     )
 
@@ -176,9 +167,8 @@ def test_drop_revision(sql_setup, engine) -> None:
 
     # import pdb; pdb.set_trace()
 
-    assert "op.drop_entity" in migration_contents
-    assert "op.create_entity" in migration_contents
-    assert "from alembic_utils" in migration_contents
+    assert migration_contents.count("op.drop_entity") == 1
+    assert migration_contents.count("op.create_entity") == 1
     assert migration_contents.index("op.drop_entity") < migration_contents.index("op.create_entity")
 
     # Execute upgrade

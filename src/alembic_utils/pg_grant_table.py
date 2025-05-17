@@ -13,7 +13,7 @@ from alembic_utils.statement import coerce_to_quoted, coerce_to_unquoted
 
 
 class PGGrantTableChoice(str, Enum):
-    # Applies at column level
+    # Applies at either table or column level
     SELECT = "SELECT"
     INSERT = "INSERT"
     UPDATE = "UPDATE"
@@ -56,7 +56,7 @@ class PGGrantTable(ReplaceableEntity):
 
     * **schema** - *str*: A SQL schema name
     * **table** - *str*: The table to grant access to
-    * **columns** - *List[str]*: A list of column names on *table* to grant access to
+    * **columns** - *List[str]*: A list of column names on *table* to grant access to. If empty or None, the grant applies to the whole table.
     * **role** - *str*: The role to grant access to
     * **grant** - *Union[Grant, str]*: On of SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
     * **with_grant_option** - *bool*: Can the role grant access to other roles
@@ -88,12 +88,7 @@ class PGGrantTable(ReplaceableEntity):
         self.with_grant_option: bool = with_grant_option
         self.signature = self.identity
 
-        if PGGrantTableChoice(self.grant) in {C.SELECT, C.INSERT, C.UPDATE, C.REFERENCES}:
-            if len(self.columns) == 0:
-                raise BadInputException(
-                    f"When grant type is {self.grant} a value must be provided for columns"
-                )
-        else:
+        if PGGrantTableChoice(self.grant) not in {C.SELECT, C.INSERT, C.UPDATE, C.REFERENCES}:
             if self.columns:
                 raise BadInputException(
                     f"When grant type is {self.grant} a value must not be provided for columns"
@@ -109,6 +104,9 @@ class PGGrantTable(ReplaceableEntity):
         # rows in information_schema.role_column_grants are uniquely identified by
         # the columns listed below + the grantor
         # be cautious when editing
+        # This is used to detect conflicting entities. Multiple `PGGrantTable` to the same table and role
+        # conflict with each other because of how Postgres handles grants and revokes.  Indeed,
+        # `PGGrantTable.to_sql_statement_drop` drops all grants for the table and role.
         return f"{self.__class__.__name__}: {self.schema}.{self.table}.{self.role}.{self.grant}"
 
     @property
@@ -131,6 +129,40 @@ class PGGrantTable(ReplaceableEntity):
 
     @classmethod
     def from_database(cls, sess: Session, schema: str = "%"):
+        grants = []
+        # TABLE LEVEL
+        sql = sql_text(
+            """
+        SELECT
+            table_schema as schema_name,
+            table_name,
+            grantee as role_name,
+            privilege_type as grant_option,
+            is_grantable
+        FROM
+            information_schema.role_table_grants rcg
+        WHERE
+            grantor = CURRENT_USER
+            and grantor != grantee
+            and table_schema like :schema
+            and privilege_type in ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES', 'DELETE', 'TRUNCATE', 'TRIGGER')
+        """
+        )
+
+        rows_table = sess.execute(sql, params={"schema": schema}).fetchall()
+        table_level_grants = set()
+
+        for schema_name, table_name, role_name, grant_option, is_grantable in rows_table:
+            grant = cls(
+                schema=schema_name,
+                table=table_name,
+                role=role_name,
+                grant=grant_option,
+                with_grant_option=is_grantable == "YES",
+            )
+            grants.append(grant)
+            table_level_grants.add((table_name, role_name, grant_option, is_grantable))
+
         # COLUMN LEVEL
         sql = sql_text(
             """
@@ -143,27 +175,26 @@ class PGGrantTable(ReplaceableEntity):
             column_name
         FROM
             information_schema.role_column_grants rcg
-            -- Cant revoke from superusers so filter out those recs
-            join pg_roles pr
-                on rcg.grantee = pr.rolname
         WHERE
-            not pr.rolsuper
-            and grantor = CURRENT_USER
+            grantor = CURRENT_USER
+            and grantor != grantee
             and table_schema like :schema
             and privilege_type in ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES')
         """
         )
 
-        rows = sess.execute(sql, params={"schema": schema}).fetchall()
-        grants = []
+        rows_column = sess.execute(sql, params={"schema": schema}).fetchall()
 
         grouped = (
-            flu(rows)
+            flu(rows_column)
             .group_by(lambda x: SchemaTableRole(*x[:5]))
             .map(lambda x: (x[0], x[1].map_item(5).collect()))
             .collect()
         )
         for s_t_r, columns in grouped:
+            if (s_t_r.table, s_t_r.role, s_t_r.grant, s_t_r.with_grant_option) in table_level_grants:
+                # Skip the table level grants
+                continue
             grant = cls(
                 schema=s_t_r.schema,
                 table=s_t_r.table,
@@ -171,40 +202,6 @@ class PGGrantTable(ReplaceableEntity):
                 grant=s_t_r.grant,
                 with_grant_option=s_t_r.with_grant_option == "YES",
                 columns=columns,
-            )
-            grants.append(grant)
-
-        # TABLE LEVEL
-        sql = sql_text(
-            """
-        SELECT
-            table_schema as schema_name,
-            table_name,
-            grantee as role_name,
-            privilege_type as grant_option,
-            is_grantable
-        FROM
-            information_schema.role_table_grants rcg
-            -- Cant revoke from superusers so filter out those recs
-            join pg_roles pr
-                on rcg.grantee = pr.rolname
-        WHERE
-            not pr.rolsuper
-            and grantor = CURRENT_USER
-            and table_schema like :schema
-            and privilege_type in ('DELETE', 'TRUNCATE', 'TRIGGER')
-        """
-        )
-
-        rows = sess.execute(sql, params={"schema": schema}).fetchall()
-
-        for schema_name, table_name, role_name, grant_option, is_grantable in rows:
-            grant = cls(
-                schema=schema_name,
-                table=table_name,
-                role=role_name,
-                grant=grant_option,
-                with_grant_option=is_grantable == "YES",
             )
             grants.append(grant)
         return grants
