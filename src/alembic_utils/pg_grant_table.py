@@ -57,7 +57,7 @@ class PGGrantTable(ReplaceableEntity):
     * **schema** - *str*: A SQL schema name
     * **table** - *str*: The table to grant access to
     * **columns** - *List[str]*: A list of column names on *table* to grant access to. If empty or None, the grant applies to the whole table.
-    * **role** - *str*: The role to grant access to
+    * **role** - *str*: The role to grant access to. To grant access to all roles, use "PUBLIC".
     * **grant** - *Union[Grant, str]*: On of SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
     * **with_grant_option** - *bool*: Can the role grant access to other roles
     """
@@ -210,15 +210,17 @@ class PGGrantTable(ReplaceableEntity):
         """Generates a SQL "create view" statement"""
         with_grant_option = " WITH GRANT OPTION" if self.with_grant_option else ""
         maybe_columns_clause = f'( {", ".join(self.columns)} )' if self.columns else ""
+        role_or_public = coerce_to_quoted(self.role) if self.role != "PUBLIC" else "PUBLIC"
         return sql_text(
-            f"GRANT {self.grant} {maybe_columns_clause} ON {self.literal_schema}.{coerce_to_quoted(self.table)} TO {coerce_to_quoted(self.role)} {with_grant_option}"
+            f"GRANT {self.grant} {maybe_columns_clause} ON {self.literal_schema}.{coerce_to_quoted(self.table)} TO {role_or_public} {with_grant_option}"
         )
 
     def to_sql_statement_drop(self, cascade=False) -> TextClause:
         """Generates a SQL "drop view" statement"""
         # cascade has no impact
+        role_or_public = coerce_to_quoted(self.role) if self.role != "PUBLIC" else "PUBLIC"
         return sql_text(
-            f"REVOKE {self.grant} ON {self.literal_schema}.{coerce_to_quoted(self.table)} FROM {coerce_to_quoted(self.role)}"
+            f"REVOKE {self.grant} ON {self.literal_schema}.{coerce_to_quoted(self.table)} FROM {role_or_public}"
         )
 
     def to_sql_statement_create_or_replace(self) -> Generator[TextClause, None, None]:

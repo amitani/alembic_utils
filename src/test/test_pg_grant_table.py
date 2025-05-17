@@ -27,13 +27,23 @@ def sql_setup(engine):
         connection.execute(text("drop table public.account cascade"))
 
 
-TEST_GRANT = PGGrantTable(
-    schema="public",
-    table="account",
-    role="anon_user",
-    grant=PGGrantTableChoice.SELECT,
-    with_grant_option=False,
-)
+def _pg_grant_table(
+    schema: str = "public",
+    table: str = "account",
+    role: str = "anon_user",
+    grant: PGGrantTableChoice = PGGrantTableChoice.SELECT,
+    columns: list[str] | None = None,
+    with_grant_option: bool = False,
+) -> PGGrantTable:
+    """Helper function to create a PGGrantTable object with defaults."""
+    return PGGrantTable(
+        schema=schema,
+        table=table,
+        role=role,
+        grant=grant,
+        columns=columns,
+        with_grant_option=with_grant_option,
+    )
 
 
 def test_repr():
@@ -52,9 +62,9 @@ def test_bad_input():
             columns=["id"],  # columns not allowed for delete
         )
 
-
-def test_create_revision(sql_setup, engine) -> None:
-    register_entities([TEST_GRANT], entity_types=[PGGrantTable])
+@pytest.mark.parametrize("role", ["anon_user", "PUBLIC"])
+def test_create_revision(sql_setup, engine, role) -> None:
+    register_entities([_pg_grant_table(role=role)], entity_types=[PGGrantTable])
     run_alembic_command(
         engine=engine,
         command="revision",
@@ -77,19 +87,12 @@ def test_create_revision(sql_setup, engine) -> None:
     run_alembic_command(engine=engine, command="downgrade", command_kwargs={"revision": "base"})
 
 
-def test_replace_revision(sql_setup, engine) -> None:
+@pytest.mark.parametrize("role", ["anon_user", "PUBLIC"])
+def test_replace_revision(sql_setup, engine, role) -> None:
     with engine.begin() as connection:
-        connection.execute(TEST_GRANT.to_sql_statement_create())
+        connection.execute(_pg_grant_table(role=role).to_sql_statement_create())
 
-    UPDATED_GRANT = PGGrantTable(
-        schema="public",
-        table="account",
-        role="anon_user",
-        grant=PGGrantTableChoice.SELECT,
-        with_grant_option=True,
-    )
-
-    register_entities([UPDATED_GRANT], entity_types=[PGGrantTable])
+    register_entities([_pg_grant_table(role=role, columns=["id"])], entity_types=[PGGrantTable])
     run_alembic_command(
         engine=engine,
         command="revision",
@@ -112,13 +115,14 @@ def test_replace_revision(sql_setup, engine) -> None:
     # Execute Downgrade
     run_alembic_command(engine=engine, command="downgrade", command_kwargs={"revision": "base"})
 
-
-def test_noop_revision(sql_setup, engine) -> None:
+@pytest.mark.parametrize("role", ["anon_user", "PUBLIC"])
+def test_create_revision_with_grant_option(sql_setup, engine, role) -> None:
+    test_grant = _pg_grant_table(role=role)
     # Create the view outside of a revision
     with engine.begin() as connection:
-        connection.execute(TEST_GRANT.to_sql_statement_create())
+        connection.execute(test_grant.to_sql_statement_create())
 
-    register_entities([TEST_GRANT], entity_types=[PGGrantTable])
+    register_entities([test_grant], entity_types=[PGGrantTable])
 
     # Create a third migration without making changes.
     # This should result in no create, drop or replace statements
@@ -144,15 +148,15 @@ def test_noop_revision(sql_setup, engine) -> None:
     # Execute Downgrade
     run_alembic_command(engine=engine, command="downgrade", command_kwargs={"revision": "base"})
 
-
-def test_drop_revision(sql_setup, engine) -> None:
+@pytest.mark.parametrize("role", ["anon_user", "PUBLIC"])
+def test_drop_revision(sql_setup, engine, role) -> None:
 
     # Register no functions locally
     register_entities([], schemas=["public"], entity_types=[PGGrantTable])
 
     # Manually create a SQL function
     with engine.begin() as connection:
-        connection.execute(TEST_GRANT.to_sql_statement_create())
+        connection.execute(_pg_grant_table(role=role).to_sql_statement_create())
 
     output = run_alembic_command(
         engine=engine,
