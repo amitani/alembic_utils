@@ -76,8 +76,8 @@ def test_create_revision(sql_setup, engine, role) -> None:
     with migration_create_path.open() as migration_file:
         migration_contents = migration_file.read()
 
-    assert "op.create_entity" in migration_contents
-    assert "op.drop_entity" in migration_contents
+    assert migration_contents.count("op.create_entity") == 1
+    assert migration_contents.count("op.drop_entity") == 1
     assert "op.replace_entity" not in migration_contents
     assert "from alembic_utils.pg_grant_table import PGGrantTable" in migration_contents
 
@@ -105,7 +105,7 @@ def test_replace_revision(sql_setup, engine, role) -> None:
         migration_contents = migration_file.read()
 
     # Granting can not be done in place.
-    assert "op.replace_entity" in migration_contents
+    assert migration_contents.count("op.replace_entity") == 2
     assert "op.create_entity" not in migration_contents
     assert "op.drop_entity" not in migration_contents
     assert "from alembic_utils.pg_grant_table import PGGrantTable" in migration_contents
@@ -173,6 +173,7 @@ def test_drop_revision(sql_setup, engine, role) -> None:
 
     assert migration_contents.count("op.drop_entity") == 1
     assert migration_contents.count("op.create_entity") == 1
+    assert "from alembic_utils" in migration_contents
     assert migration_contents.index("op.drop_entity") < migration_contents.index("op.create_entity")
 
     # Execute upgrade

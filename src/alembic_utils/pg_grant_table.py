@@ -149,10 +149,10 @@ class PGGrantTable(ReplaceableEntity):
         """
         )
 
-        rows_table = sess.execute(sql, params={"schema": schema}).fetchall()
+        rows = sess.execute(sql, params={"schema": schema}).fetchall()
         table_level_grants = set()
 
-        for schema_name, table_name, role_name, grant_option, is_grantable in rows_table:
+        for schema_name, table_name, role_name, grant_option, is_grantable in rows:
             grant = cls(
                 schema=schema_name,
                 table=table_name,
@@ -183,10 +183,10 @@ class PGGrantTable(ReplaceableEntity):
         """
         )
 
-        rows_column = sess.execute(sql, params={"schema": schema}).fetchall()
+        rows = sess.execute(sql, params={"schema": schema}).fetchall()
 
         grouped = (
-            flu(rows_column)
+            flu(rows)
             .group_by(lambda x: SchemaTableRole(*x[:5]))
             .map(lambda x: (x[0], x[1].map_item(5).collect()))
             .collect()
