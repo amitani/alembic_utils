@@ -44,10 +44,14 @@ def test_create_revision(engine) -> None:
     with migration_create_path.open() as migration_file:
         migration_contents = migration_file.read()
 
-    assert "op.create_entity" in migration_contents
-    assert "op.drop_entity" in migration_contents
+    expected_create_call = f"op.execute(sql_text({TO_UPPER.to_sql_statement_create()!r}))"
+    expected_drop_call = f"op.execute(sql_text({TO_UPPER.to_sql_statement_drop()!r}))"
+
+    assert expected_create_call in migration_contents
+    assert expected_drop_call in migration_contents
     assert "op.replace_entity" not in migration_contents
-    assert "from alembic_utils.pg_function import PGFunction" in migration_contents
+    assert "from alembic_utils.pg_function import PGFunction" not in migration_contents
+    assert "from sqlalchemy import text as sql_text" in migration_contents
 
     # Execute upgrade
     run_alembic_command(engine=engine, command="upgrade", command_kwargs={"revision": "head"})
@@ -84,10 +88,16 @@ def test_update_revision(engine) -> None:
     with migration_replace_path.open() as migration_file:
         migration_contents = migration_file.read()
 
-    assert "op.replace_entity" in migration_contents
+    # PGFunction.to_sql_statement_create_or_replace yields a single statement
+    expected_replace_call_new = f"op.execute(sql_text({next(iter(UPDATED_TO_UPPER.to_sql_statement_create_or_replace()))!r}))"
+    expected_replace_call_old = f"op.execute(sql_text({next(iter(TO_UPPER.to_sql_statement_create_or_replace()))!r}))"
+
+    assert expected_replace_call_new in migration_contents
+    assert expected_replace_call_old in migration_contents # For downgrade
     assert "op.create_entity" not in migration_contents
     assert "op.drop_entity" not in migration_contents
-    assert "from alembic_utils.pg_function import PGFunction" in migration_contents
+    assert "from alembic_utils.pg_function import PGFunction" not in migration_contents
+    assert "from sqlalchemy import text as sql_text" in migration_contents
 
     # Execute upgrade
     run_alembic_command(engine=engine, command="upgrade", command_kwargs={"revision": "head"})
@@ -115,7 +125,8 @@ def test_noop_revision(engine) -> None:
     assert "op.create_entity" not in migration_contents
     assert "op.drop_entity" not in migration_contents
     assert "op.replace_entity" not in migration_contents
-    assert "from alembic_utils" not in migration_contents
+    assert "from alembic_utils.pg_function import PGFunction" not in migration_contents
+    # It's okay if "from sqlalchemy import text as sql_text" is present or not for noop
 
     # Execute upgrade
     run_alembic_command(engine=engine, command="upgrade", command_kwargs={"revision": "head"})
@@ -142,10 +153,14 @@ def test_drop(engine) -> None:
     with migration_create_path.open() as migration_file:
         migration_contents = migration_file.read()
 
-    assert "op.drop_entity" in migration_contents
-    assert "op.create_entity" in migration_contents
-    assert "from alembic_utils" in migration_contents
-    assert migration_contents.index("op.drop_entity") < migration_contents.index("op.create_entity")
+    expected_drop_call = f"op.execute(sql_text({TO_UPPER.to_sql_statement_drop()!r}))"
+    expected_create_call = f"op.execute(sql_text({TO_UPPER.to_sql_statement_create()!r}))"
+
+    assert expected_drop_call in migration_contents
+    assert expected_create_call in migration_contents # For downgrade
+    assert "from alembic_utils.pg_function import PGFunction" not in migration_contents
+    assert "from sqlalchemy import text as sql_text" in migration_contents
+    assert migration_contents.index(expected_drop_call) < migration_contents.index(expected_create_call)
 
     # Execute upgrade
     run_alembic_command(engine=engine, command="upgrade", command_kwargs={"revision": "head"})
@@ -181,7 +196,13 @@ def test_has_no_parameters(engine) -> None:
     with migration_create_path.open() as migration_file:
         migration_contents = migration_file.read()
 
-    assert "op.drop_entity" in migration_contents
+    expected_create_call = f"op.execute(sql_text({SIDE_EFFECT.to_sql_statement_create()!r}))"
+    expected_drop_call = f"op.execute(sql_text({SIDE_EFFECT.to_sql_statement_drop()!r}))"
+
+    assert expected_create_call in migration_contents
+    assert expected_drop_call in migration_contents # For downgrade
+    assert "from alembic_utils.pg_function import PGFunction" not in migration_contents
+    assert "from sqlalchemy import text as sql_text" in migration_contents
 
     # Execute upgrade
     run_alembic_command(engine=engine, command="upgrade", command_kwargs={"revision": "head"})
@@ -209,6 +230,8 @@ def test_ignores_extension_functions(engine) -> None:
             migration_contents = migration_file.read()
 
         assert "op.drop_entity" not in migration_contents
+        assert "from alembic_utils.pg_function import PGFunction" not in migration_contents
+        # sql_text import may or may not be there if no ops are generated
     finally:
         with engine.begin() as connection:
             connection.execute(text("drop extension if exists unaccent;"))
@@ -249,10 +272,14 @@ def test_plpgsql_colon_esacpe(engine) -> None:
     with migration_create_path.open() as migration_file:
         migration_contents = migration_file.read()
 
-    assert "op.create_entity" in migration_contents
-    assert "op.drop_entity" in migration_contents
+    expected_create_call = f"op.execute(sql_text({PLPGSQL_FUNC.to_sql_statement_create()!r}))"
+    expected_drop_call = f"op.execute(sql_text({PLPGSQL_FUNC.to_sql_statement_drop()!r}))"
+
+    assert expected_create_call in migration_contents
+    assert expected_drop_call in migration_contents # For downgrade
     assert "op.replace_entity" not in migration_contents
-    assert "from alembic_utils.pg_function import PGFunction" in migration_contents
+    assert "from alembic_utils.pg_function import PGFunction" not in migration_contents
+    assert "from sqlalchemy import text as sql_text" in migration_contents
 
     # Execute upgrade
     run_alembic_command(engine=engine, command="upgrade", command_kwargs={"revision": "head"})

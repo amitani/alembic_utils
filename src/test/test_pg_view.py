@@ -46,10 +46,14 @@ def test_create_revision(engine) -> None:
     with migration_create_path.open() as migration_file:
         migration_contents = migration_file.read()
 
-    assert "op.create_entity" in migration_contents
-    assert "op.drop_entity" in migration_contents
+    expected_create_call = f"op.execute(sql_text({TEST_VIEW.to_sql_statement_create()!r}))"
+    expected_drop_call = f"op.execute(sql_text({TEST_VIEW.to_sql_statement_drop()!r}))"
+
+    assert expected_create_call in migration_contents
+    assert expected_drop_call in migration_contents
     assert "op.replace_entity" not in migration_contents
-    assert "from alembic_utils.pg_view import PGView" in migration_contents
+    assert "from alembic_utils.pg_view import PGView" not in migration_contents
+    assert "from sqlalchemy import text as sql_text" in migration_contents
 
     # Execute upgrade
     run_alembic_command(engine=engine, command="upgrade", command_kwargs={"revision": "head"})
@@ -82,14 +86,33 @@ def test_update_revision(engine) -> None:
     with migration_replace_path.open() as migration_file:
         migration_contents = migration_file.read()
 
-    assert "op.replace_entity" in migration_contents
+    for stmt in UPDATED_TEST_VIEW.to_sql_statement_create_or_replace():
+        assert f"op.execute(sql_text({stmt!r}))" in migration_contents
+    for stmt in TEST_VIEW.to_sql_statement_create_or_replace():
+        assert f"op.execute(sql_text({stmt!r}))" in migration_contents
+
     assert "op.create_entity" not in migration_contents
     assert "op.drop_entity" not in migration_contents
-    assert "from alembic_utils.pg_view import PGView" in migration_contents
+    assert "from alembic_utils.pg_view import PGView" not in migration_contents
+    assert "from sqlalchemy import text as sql_text" in migration_contents
 
     assert "true" in migration_contents.lower()
-    assert "false" in migration_contents.lower()
-    assert migration_contents.lower().find("true") < migration_contents.lower().find("false")
+    # Check that the old definition (containing "false") is part of a downgrade sql_text
+    # and the new definition (containing "true") is part of an upgrade sql_text
+    assert f"op.execute(sql_text({TEST_VIEW.to_sql_statement_create_or_replace()[0]!r}))".lower() in migration_contents.lower()
+    assert f"op.execute(sql_text({UPDATED_TEST_VIEW.to_sql_statement_create_or_replace()[0]!r}))".lower() in migration_contents.lower()
+
+    # Ensure new definition (is_updated=TRUE) comes before old definition (is_updated=FALSE) in the file
+    # for the upgrade path. The downgrade path will have the opposite order.
+    new_def_index = migration_contents.lower().find("true as is_updated")
+    old_def_index = migration_contents.lower().find("false as is_updated")
+
+    # We need to find which definition is in the "upgrade" part of the migration
+    # The upgrade part comes first in the file.
+    # The easiest way to check is to see if the "true" (new) definition appears before "false" (old)
+    assert new_def_index != -1
+    assert old_def_index != -1
+    assert new_def_index < old_def_index
 
     # Execute upgrade
     run_alembic_command(engine=engine, command="upgrade", command_kwargs={"revision": "head"})
@@ -121,7 +144,8 @@ def test_noop_revision(engine) -> None:
     assert "op.create_entity" not in migration_contents
     assert "op.drop_entity" not in migration_contents
     assert "op.replace_entity" not in migration_contents
-    assert "from alembic_utils" not in migration_contents
+    assert "from alembic_utils.pg_view import PGView" not in migration_contents
+    # It's okay if "from sqlalchemy import text as sql_text" is present or not
 
     # Execute upgrade
     run_alembic_command(engine=engine, command="upgrade", command_kwargs={"revision": "head"})
@@ -151,10 +175,14 @@ def test_drop_revision(engine) -> None:
 
     # import pdb; pdb.set_trace()
 
-    assert "op.drop_entity" in migration_contents
-    assert "op.create_entity" in migration_contents
-    assert "from alembic_utils" in migration_contents
-    assert migration_contents.index("op.drop_entity") < migration_contents.index("op.create_entity")
+    expected_drop_call = f"op.execute(sql_text({TEST_VIEW.to_sql_statement_drop()!r}))"
+    expected_create_call = f"op.execute(sql_text({TEST_VIEW.to_sql_statement_create()!r}))"
+
+    assert expected_drop_call in migration_contents
+    assert expected_create_call in migration_contents
+    assert "from alembic_utils.pg_view import PGView" not in migration_contents
+    assert "from sqlalchemy import text as sql_text" in migration_contents
+    assert migration_contents.index(expected_drop_call) < migration_contents.index(expected_create_call)
 
     # Execute upgrade
     run_alembic_command(engine=engine, command="upgrade", command_kwargs={"revision": "head"})
@@ -193,10 +221,15 @@ def test_update_create_or_replace_failover_to_drop_add(engine) -> None:
     with migration_replace_path.open() as migration_file:
         migration_contents = migration_file.read()
 
-    assert "op.replace_entity" in migration_contents
+    for stmt in UPDATED_TEST_VIEW.to_sql_statement_create_or_replace():
+        assert f"op.execute(sql_text({stmt!r}))" in migration_contents
+    for stmt in TEST_VIEW.to_sql_statement_create_or_replace():
+        assert f"op.execute(sql_text({stmt!r}))" in migration_contents
+
     assert "op.create_entity" not in migration_contents
     assert "op.drop_entity" not in migration_contents
-    assert "from alembic_utils.pg_view import PGView" in migration_contents
+    assert "from alembic_utils.pg_view import PGView" not in migration_contents
+    assert "from sqlalchemy import text as sql_text" in migration_contents
 
     # Execute upgrade
     run_alembic_command(engine=engine, command="upgrade", command_kwargs={"revision": "head"})
@@ -237,11 +270,15 @@ def test_create_revision_with_url_w_colon(engine) -> None:
     with migration_create_path.open() as migration_file:
         migration_contents = migration_file.read()
 
-    assert url in migration_contents
-    assert "op.create_entity" in migration_contents
-    assert "op.drop_entity" in migration_contents
+    expected_create_call = f"op.execute(sql_text({some_view.to_sql_statement_create()!r}))"
+    expected_drop_call = f"op.execute(sql_text({some_view.to_sql_statement_drop()!r}))"
+
+    assert url in migration_contents # Check if the URL itself is still present in the generated SQL
+    assert expected_create_call in migration_contents
+    assert expected_drop_call in migration_contents
     assert "op.replace_entity" not in migration_contents
-    assert "from alembic_utils.pg_view import PGView" in migration_contents
+    assert "from alembic_utils.pg_view import PGView" not in migration_contents
+    assert "from sqlalchemy import text as sql_text" in migration_contents
 
     # Execute upgrade
     run_alembic_command(engine=engine, command="upgrade", command_kwargs={"revision": "head"})
@@ -272,10 +309,14 @@ def test_view_contains_colon(engine) -> None:
     with migration_create_path.open() as migration_file:
         migration_contents = migration_file.read()
 
-    assert "op.create_entity" in migration_contents
-    assert "op.drop_entity" in migration_contents
+    expected_create_call = f"op.execute(sql_text({TEST_SEMI_VIEW.to_sql_statement_create()!r}))"
+    expected_drop_call = f"op.execute(sql_text({TEST_SEMI_VIEW.to_sql_statement_drop()!r}))"
+
+    assert expected_create_call in migration_contents
+    assert expected_drop_call in migration_contents
     assert "op.replace_entity" not in migration_contents
-    assert "from alembic_utils.pg_view import PGView" in migration_contents
+    assert "from alembic_utils.pg_view import PGView" not in migration_contents
+    assert "from sqlalchemy import text as sql_text" in migration_contents
 
     # Execute upgrade
     run_alembic_command(engine=engine, command="upgrade", command_kwargs={"revision": "head"})

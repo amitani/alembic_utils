@@ -26,6 +26,10 @@ def test_migration_create_function(engine) -> None:
     with migration_create_path.open() as migration_file:
         migration_contents = migration_file.read()
 
-    assert migration_contents.count("op.create_entity") == 1
-    assert migration_contents.count("op.drop_entity") == 1
-    assert migration_contents.count("from alembic_utils") == 1
+    expected_create_call = f"op.execute(sql_text({TO_UPPER.to_sql_statement_create()!r}))"
+    expected_drop_call = f"op.execute(sql_text({TO_UPPER.to_sql_statement_drop()!r}))"
+
+    assert expected_create_call in migration_contents
+    assert expected_drop_call in migration_contents
+    assert "from alembic_utils.pg_function import PGFunction" not in migration_contents
+    assert "from sqlalchemy import text as sql_text" in migration_contents

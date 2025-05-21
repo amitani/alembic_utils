@@ -126,28 +126,25 @@ def replace_or_revert_entity(operations, operation):
 @renderers.dispatch_for(CreateOp)
 def render_create_entity(autogen_context, op):
     target = op.target
-    autogen_context.imports.add(target.render_import_statement())
-    variable_name = target.to_variable_name()
-    return target.render_self_for_migration() + f"op.create_entity({variable_name})\n"
+    autogen_context.imports.add("from sqlalchemy import text as sql_text")
+    return f"op.execute(sql_text({target.to_sql_statement_create()!r}))\n"
 
 
 @renderers.dispatch_for(DropOp)
 def render_drop_entity(autogen_context, op):
     target = op.target
-    autogen_context.imports.add(target.render_import_statement())
-    variable_name = target.to_variable_name()
-    return (
-        target.render_self_for_migration(omit_definition=False)
-        + f"op.drop_entity({variable_name})\n"
-    )
+    autogen_context.imports.add("from sqlalchemy import text as sql_text")
+    return f"op.execute(sql_text({target.to_sql_statement_drop()!r}))\n"
 
 
 @renderers.dispatch_for(ReplaceOp)
 def render_replace_entity(autogen_context, op):
     target = op.target
-    autogen_context.imports.add(target.render_import_statement())
-    variable_name = target.to_variable_name()
-    return target.render_self_for_migration() + f"op.replace_entity({variable_name})\n"
+    autogen_context.imports.add("from sqlalchemy import text as sql_text")
+    rendered_sql = "\n".join(
+        [f"op.execute(sql_text({stmt!r}))" for stmt in target.to_sql_statement_create_or_replace()]
+    )
+    return rendered_sql + "\n"
 
 
 @renderers.dispatch_for(RevertOp)
@@ -161,12 +158,14 @@ def render_revert_entity(autogen_context, op):
     # as target._version_to_replace
 
     target = op.target
-    autogen_context.imports.add(target.render_import_statement())
+    autogen_context.imports.add("from sqlalchemy import text as sql_text")
 
     db_target = target._version_to_replace
 
     if db_target is None:
         raise UnreachableException
 
-    variable_name = db_target.to_variable_name()
-    return db_target.render_self_for_migration() + f"op.replace_entity({variable_name})"
+    rendered_sql = "\n".join(
+        [f"op.execute(sql_text({stmt!r}))" for stmt in db_target.to_sql_statement_create_or_replace()]
+    )
+    return rendered_sql + "\n"
